@@ -7,6 +7,7 @@ Uses configs/data/active.yaml to decide where and how to load data.
 
 from __future__ import annotations
 import os
+from os import PathLike
 import yaml
 import pandas as pd
 import pyarrow.parquet as pq
@@ -51,7 +52,7 @@ def download_from_drive(folder_link: str, dest: Path) -> None:
 # ============================================================
 
 class DataLoader:
-    def __init__(self, config_path: str = "configs/data/active.yaml"):
+    def __init__(self, config_path: str | Path | PathLike[str] = "configs/data/active.yaml") -> None:
         self.config_path = Path(config_path)
         self.config = load_yaml(self.config_path)
         self.local_dir = Path(self.config["source"]["local_dir"])
@@ -74,14 +75,25 @@ class DataLoader:
     # 2. Load a single dataset (auto Parquet/CSV fallback)
     # --------------------------------------------------------
     def load_dataset(self, name: str) -> pd.DataFrame:
-        """Load one dataset (e.g., train, stores) with fallback."""
+        """Load one dataset (e.g., train, stores) with automatic Parquet/CSV handling."""
         files = self.detect_files()
+
+        # Attempt auto-download if no data found
         if not files:
             st.warning("⚠️ No data files found locally. Attempting Drive download...")
             download_from_drive(self.drive_link, self.local_dir)
             files = self.detect_files()
 
-        # Priority: Parquet > CSV (if allowed)
+        # Auto-create Parquet if none exist but CSVs are present
+        parquet_exists = any(f.suffix == ".parquet" for f in files.values())
+        csv_exists = any(f.suffix == ".csv" for f in files.values())
+
+        if self.use_parquet_first and not parquet_exists and csv_exists:
+            st.info("🧩 No Parquet found — running one-time preprocessing...")
+            self.preprocess_csv_to_parquet()
+            files = self.detect_files()
+
+        # Load according to priority
         if self.use_parquet_first and f"{name}" in files and files[name].suffix == ".parquet":
             st.info(f"📦 Loading {name}.parquet ...")
             return pd.read_parquet(files[name])
