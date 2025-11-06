@@ -1,0 +1,30 @@
+# Active data config for loading, preprocessing, and slicing.
+
+source:
+  local_dir: "data"     # local CSV/Parquet folder (preferred)
+  drive_link: ""        # optional Google Drive folder (fallback if local missing)
+  use_parquet_first: true  # if parquet preprocessed store exists, prefer it over CSV
+
+preprocess:
+  enabled: true           # allow one-time CSV->Parquet preprocessing
+  partition_by: ["year","month"]  # recommended partitions for faster slicing
+  compression: "zstd"     # zstd or snappy
+  deduplicate: true
+  coerce_dates: true
+  normalize_booleans: true
+
+window:
+  mode: "months"          # "months" or "full"
+  months: 12              # used if mode == "months"
+
+region:
+  column: ""              # e.g., "state", "city", "cluster"; empty = no filter
+  value: ""               # selected value; empty = no filter
+
+sample:
+  enabled: false
+  frac: 0.01              # 1% quick run
+
+test_data:
+  prefer_local: true      # use local test if present
+  allow_manual_upload: true
