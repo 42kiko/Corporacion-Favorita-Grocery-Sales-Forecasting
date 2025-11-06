@@ -1,0 +1,43 @@
+# Active (current) feature configuration used by the app.
+
+calendar:
+  enabled: true
+  fields: ["year","quarter","month","iso_week","day","dayofweek","is_weekend","is_month_start","is_month_end"]
+
+lags:
+  enabled: true
+  values: [1,7,14,28,35,56]
+
+rolling:
+  enabled: true
+  windows: [7,28]
+  stats: ["mean","std"]
+
+expanding:
+  enabled: false
+  stats: ["mean"]
+
+holidays:
+  enabled: true
+  proximity_days: 3
+
+exogenous:
+  oil:
+    enabled: true
+    lags: [1,7,28]
+    rolling_windows: [7]
+  transactions:
+    enabled: true
+    lags: [1,7]
+    rolling_windows: [7]
+
+categoricals:
+  enabled: true
+  columns: ["store_nbr","item_nbr","family","class","city","state","type","cluster"]
+
+interactions:
+  enabled: false
+  pairs: ["lag_1*onpromotion","rmean_7*month"]
+
+target:
+  transform: "none"
