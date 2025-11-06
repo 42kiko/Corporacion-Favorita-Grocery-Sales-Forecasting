@@ -5,15 +5,20 @@
     "python.analysis.typeCheckingMode": "basic",
     "python.formatting.provider": "black",
     "python.linting.ruffEnabled": true,
-    "python.testing.pytestArgs": [
-        "tests"
-    ],
+
+    // --- Pytest configuration ---
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+      "--rootdir=${workspaceFolder}",
+      "tests"
+    ],
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+
     // --- TOML formatting (protect pyproject.toml) ---
     "editor.defaultFormatter": "tamasfe.even-better-toml",
     "[toml]": {
-        "editor.formatOnSaveMode": "file",
-        "editor.formatOnSave": false
+      "editor.formatOnSaveMode": "file",
+      "editor.formatOnSave": false
     }
-}
+  }
