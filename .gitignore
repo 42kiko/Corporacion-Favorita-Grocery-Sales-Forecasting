@@ -32,7 +32,7 @@ dist/
 # Local OS / IDE files
 .DS_Store
 Thumbs.db
-.vscode/
+#.vscode/  settings for user to got the interpreter selected
 .idea/
 
 # =========================

@@ -30,3 +30,13 @@ pip install -e ".[dev]"
 ```bash
 python -m venv .venv && .\.venv\Scripts\activate && python -m pip install --upgrade pip && pip install -e ".[dev]"
 ```
+
+
+### maybe under vs code you need to set the interpreter manuell
+
+```bash
+# open command palett under vs code
+cmd + shift + p
+```
+
+![Alt-Text](img/select-interpreter.png "Select Interpreter VS Code")
