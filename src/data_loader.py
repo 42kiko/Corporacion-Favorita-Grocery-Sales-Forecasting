@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import streamlit as st
 import gdown
-
+import pyarrow.parquet as pq
+import pyarrow as pa
+import time
 
 # ============================================================
 # --- Utility Functions
@@ -106,40 +108,92 @@ class DataLoader:
     # --------------------------------------------------------
     # 3. Preprocess: CSV → Parquet
     # --------------------------------------------------------
-    def preprocess_csv_to_parquet(self) -> None:
-        """Convert all CSVs to Parquet according to config."""
+
+
+    def preprocess_csv_to_parquet(self, files: Optional[list[str]] = None) -> None:
+        """
+        Convert large CSVs to Parquet safely (streaming, resumable, progress-logged).
+        """
         preprocess_cfg = self.config["preprocess"]
         if not preprocess_cfg["enabled"]:
             st.info("ℹ️ Preprocessing disabled in config.")
             return
 
         compression = preprocess_cfg["compression"]
-        partition_by = preprocess_cfg["partition_by"]
         chunksize = preprocess_cfg["chunksize_rows"]
 
-        st.info("🧩 Starting CSV → Parquet conversion...")
         ensure_dir(self.local_dir)
+        candidates = list(self.local_dir.glob("*.csv"))
+        if files:
+            wanted = {f.lower() for f in files}
+            candidates = [p for p in candidates if p.name.lower() in wanted]
 
-        for csv_file in self.local_dir.glob("*.csv"):
+        if not candidates:
+            st.warning("⚠️ No CSVs found.")
+            return
+
+        for csv_file in candidates:
             parquet_file = self.local_dir / f"{csv_file.stem}.parquet"
-            st.write(f"➡️ Converting {csv_file.name} → {parquet_file.name}")
+            st.write(f"➡️ {csv_file.name} → {parquet_file.name}")
+            t0 = time.time()
 
-            # Stream in chunks for large CSVs
             reader = pd.read_csv(csv_file, chunksize=chunksize, low_memory=False)
-            table_parts = []
+            writer = None
+            total_rows = 0
+            chunk_idx = 0
+
             for chunk in reader:
+                chunk_idx += 1
+                total_rows += len(chunk)
+
                 if preprocess_cfg["deduplicate"]:
                     chunk = chunk.drop_duplicates()
                 if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
                     chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
-                if preprocess_cfg["normalize_booleans"]:
-                    for col in chunk.select_dtypes(include=["bool"]).columns:
-                        chunk[col] = chunk[col].astype(int)
-                table_parts.append(pa.Table.from_pandas(chunk))
+                # --- Normalize 'onpromotion' robustly to nullable boolean ---
+                if "onpromotion" in chunk.columns:
+                    chunk["onpromotion"] = (
+                        chunk["onpromotion"]
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .replace({"true": True, "false": False, "nan": None, "": None})
+                        .astype("boolean")   # <- wichtig: pandas nullable BooleanDtype
+                    )
 
-            table = pa.concat_tables(table_parts)
-            pq.write_table(table, parquet_file, compression=compression)
-        st.success("✅ All CSV files converted to Parquet!")
+                # Optional: Date normalisieren
+                if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
+                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
+
+                # Dedupe
+                if preprocess_cfg["deduplicate"]:
+                    chunk = chunk.drop_duplicates()
+
+                # Numerics konsistent
+                for col in chunk.columns:
+                    # NICHT mehr: if chunk[col].dtype == "boolean": chunk[col] = chunk[col].astype("bool")
+                    if pd.api.types.is_float_dtype(chunk[col]):
+                        chunk[col] = chunk[col].astype("float64")
+
+                # Nach Arrow konvertieren
+                table = pa.Table.from_pandas(chunk, preserve_index=False)
+
+                if writer is None:
+                    writer = pq.ParquetWriter(parquet_file, table.schema, compression=compression)
+                else:
+                    # auf initiales Schema casten (erzwingt Konsistenz)
+                    table = table.cast(writer.schema)
+
+                writer.write_table(table)
+
+                if chunk_idx % 10 == 0:
+                    st.write(f"   · processed {total_rows:,} rows so far...")
+
+            if writer:
+                writer.close()
+            dt = time.time() - t0
+            size_mb = parquet_file.stat().st_size / 1e6 if parquet_file.exists() else 0
+            st.success(f"✅ Done {csv_file.name}: {total_rows:,} rows in {dt:,.1f}s ({size_mb:.1f} MB)")
 
     # --------------------------------------------------------
     # 4. Sampling logic

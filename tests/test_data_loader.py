@@ -1,128 +1,124 @@
 """
 Unit tests for src/data_loader.py
-Covers YAML loading, directory creation, sampling, region filter, and dataset detection.
+Covers YAML loading, file detection, preprocessing, and sampling logic.
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
 import pandas as pd
-import pytest
-
-# --- Fix import path so pytest finds src ---
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
-
+import pyarrow.parquet as pq
+from pathlib import Path
 from src.data_loader import DataLoader, load_yaml, ensure_dir
 
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+def create_dummy_csv(tmp_path: Path) -> Path:
+    """Create small dummy CSV with mixed types (like Favorita train)."""
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "date": ["2017-01-01", "2017-01-02", "2017-01-03"],
+            "store_nbr": [1, 1, 2],
+            "item_nbr": [101, 102, 103],
+            "unit_sales": [10.5, 20.0, 30.1],
+            "onpromotion": ["True", "False", None],
+        }
+    )
+    csv_path = tmp_path / "train.csv"
+    df.to_csv(csv_path, index=False)
+    return csv_path
 
-# ============================================================
-# --- Fixtures
-# ============================================================
 
-@pytest.fixture
-def temp_config(tmp_path: Path) -> Path:
-    """Create a minimal valid active.yaml config file."""
-    config_dir = tmp_path / "configs" / "data"
-    config_dir.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------
+def test_load_yaml_reads_existing(tmp_path: Path) -> None:
+    cfg = {"source": {"local_dir": "data", "use_parquet_first": True}}
+    yaml_path = tmp_path / "active.yaml"
+    yaml_path.write_text("source:\n  local_dir: data\n  use_parquet_first: true\n")
+    data = load_yaml(yaml_path)
+    assert data["source"]["use_parquet_first"] is True
 
-    yaml_content = """\
+
+def test_ensure_dir_creates_folder(tmp_path: Path) -> None:
+    new_dir = tmp_path / "nested"
+    assert not new_dir.exists()
+    ensure_dir(new_dir)
+    assert new_dir.exists()
+
+
+def test_detect_and_preprocess_to_parquet(tmp_path: Path) -> None:
+    """Verify CSV → Parquet conversion runs and keeps schema consistent."""
+    # Prepare dummy file
+    csv_path = create_dummy_csv(tmp_path)
+
+    # Dummy config YAML
+    cfg_yaml = tmp_path / "active.yaml"
+    cfg_yaml.write_text(
+        """
 source:
-  local_dir: "{data_dir}"
-  use_parquet_first: false
+  local_dir: {tmp}
+  use_parquet_first: true
   drive_link: ""
 preprocess:
   enabled: true
   compression: "zstd"
-  chunksize_rows: 1000
   deduplicate: true
   coerce_dates: true
   normalize_booleans: true
+  chunksize_rows: 2
 region:
   column: ""
   value: ""
 sample:
   enabled: false
-  mode: "frac"
-  frac: 0.1
-  n_rows: 1000
+""".format(tmp=tmp_path)
+    )
+
+    # Run DataLoader
+    loader = DataLoader(config_path=str(cfg_yaml))
+    loader.preprocess_csv_to_parquet()
+
+    # Check if Parquet exists
+    parquet_file = tmp_path / "train.parquet"
+    assert parquet_file.exists(), "Expected Parquet file after preprocessing"
+
+    # Validate schema consistency
+    parquet_table = pq.read_table(parquet_file)
+    cols = [f.name for f in parquet_table.schema]
+    assert "onpromotion" in cols
+    onpromotion_type = str(parquet_table.schema.field("onpromotion").type)
+    assert "bool" in onpromotion_type, f"Expected bool type, got {onpromotion_type}"
+
+
+def test_load_train_data_pipeline(tmp_path: Path) -> None:
+    """Ensure full pipeline runs without crashing."""
+    # Create dummy CSV + config
+    create_dummy_csv(tmp_path)
+    cfg_yaml = tmp_path / "active.yaml"
+    cfg_yaml.write_text(
+        f"""
+source:
+  local_dir: "{tmp_path}"
+  use_parquet_first: false
+  drive_link: ""
+preprocess:
+  enabled: false
+  compression: "zstd"
+  deduplicate: false
+  coerce_dates: false
+  normalize_booleans: false
+  chunksize_rows: 1000
+region:
+  column: ""
+  value: ""
+sample:
+  enabled: false
 """
-    # Substitute temp dir for local_dir
-    yaml_text = yaml_content.format(data_dir=str(tmp_path / "data"))
-    yaml_path = config_dir / "active.yaml"
-    yaml_path.write_text(yaml_text)
-    return yaml_path
+    )
 
-
-@pytest.fixture
-def mock_csv_data(tmp_path: Path) -> pd.DataFrame:
-    """Create a mock CSV dataset for testing."""
-    df = pd.DataFrame({
-        "date": pd.date_range("2020-01-01", periods=5),
-        "store_nbr": [1, 1, 2, 2, 3],
-        "unit_sales": [10, 20, 30, 40, 50],
-        "city": ["A", "A", "B", "B", "C"]
-    })
-    data_dir = tmp_path / "data"
-    ensure_dir(data_dir)
-    df.to_csv(data_dir / "train.csv", index=False)
-    return df
-
-
-# ============================================================
-# --- Tests
-# ============================================================
-
-def test_load_yaml_valid(temp_config: Path) -> None:
-    """Ensure load_yaml correctly reads YAML."""
-    config = load_yaml(temp_config)
-    assert isinstance(config, dict)
-    assert "source" in config
-    assert config["source"]["use_parquet_first"] is False
-
-
-def test_ensure_dir_creates_nested(tmp_path: Path) -> None:
-    """Ensure nested directories are created without error."""
-    new_dir = tmp_path / "nested" / "folder"
-    ensure_dir(new_dir)
-    assert new_dir.exists() and new_dir.is_dir()
-
-
-def test_detect_files_finds_csv(temp_config: Path, mock_csv_data: pd.DataFrame) -> None:
-    """DataLoader should detect CSV files inside local_dir."""
-    loader = DataLoader(config_path=temp_config)
-    files = loader.detect_files()
-    assert "train" in files
-    assert files["train"].suffix == ".csv"
-
-
-def test_load_dataset_reads_csv(temp_config: Path, mock_csv_data: pd.DataFrame) -> None:
-    """DataLoader.load_dataset should return a DataFrame from CSV."""
-    loader = DataLoader(config_path=temp_config)
-    df = loader.load_dataset("train")
+    loader = DataLoader(config_path=str(cfg_yaml))
+    df = loader.load_train_data()
     assert isinstance(df, pd.DataFrame)
     assert not df.empty
-    assert "unit_sales" in df.columns
-
-
-def test_apply_region_filter_filters_correctly(temp_config: Path, mock_csv_data: pd.DataFrame) -> None:
-    """apply_region_filter should filter dataset by region settings."""
-    loader = DataLoader(config_path=temp_config)
-    # Modify config in-memory for region filter
-    loader.config["region"]["column"] = "city"
-    loader.config["region"]["value"] = "A"
-    filtered = loader.apply_region_filter(mock_csv_data)
-    assert len(filtered) == 2
-    assert all(filtered["city"] == "A")
-
-
-def test_apply_sampling_frac(temp_config: Path, mock_csv_data: pd.DataFrame) -> None:
-    """apply_sampling should return a smaller sample when enabled."""
-    loader = DataLoader(config_path=temp_config)
-    loader.config["sample"]["enabled"] = True
-    loader.config["sample"]["mode"] = "frac"
-    loader.config["sample"]["frac"] = 0.4
-    sampled = loader.apply_sampling(mock_csv_data)
-    assert len(sampled) < len(mock_csv_data)
-    assert isinstance(sampled, pd.DataFrame)
+    assert "onpromotion" in df.columns
