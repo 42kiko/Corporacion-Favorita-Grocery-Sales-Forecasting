@@ -8,18 +8,15 @@ Uses configs/data/active.yaml to decide where and how to load data.
 from __future__ import annotations
 import os
 from os import PathLike
+from pathlib import Path
+from typing import Dict, Any, Optional, Union
 import yaml
 import pandas as pd
-import pyarrow.parquet as pq
 import pyarrow as pa
-import pyarrow.csv as pv
-from pathlib import Path
-from typing import Dict, Any, Optional
+import pyarrow.parquet as pq
 import streamlit as st
-import gdown
-import pyarrow.parquet as pq
-import pyarrow as pa
 import time
+
 
 # ============================================================
 # --- Utility Functions
@@ -37,81 +34,82 @@ def ensure_dir(path: Path) -> None:
     """Ensure directory exists."""
     path.mkdir(parents=True, exist_ok=True)
 
+
 # ============================================================
 # --- Core Data Loader
 # ============================================================
 
 class DataLoader:
-    def __init__(self, config_path: str | Path | PathLike[str] = "configs/data/active.yaml") -> None:
+    """Main data access and preprocessing logic."""
+
+    def __init__(self, config_path: Union[str, Path, PathLike[str]] = "configs/data/active.yaml") -> None:
         self.config_path = Path(config_path)
         self.config = load_yaml(self.config_path)
         self.local_dir = Path(self.config["source"]["local_dir"])
         self.use_parquet_first = self.config["source"]["use_parquet_first"]
-        self.drive_link = self.config["source"].get("drive_link", "")
 
     # --------------------------------------------------------
-    # 1. File detection & loading
+    # 1. File detection
     # --------------------------------------------------------
     def detect_files(self) -> Dict[str, Path]:
         """Return available CSV or Parquet files in local_dir."""
-        data_files = {}
+        files: Dict[str, Path] = {}
         for ext in ["parquet", "csv"]:
             for f in self.local_dir.glob(f"*.{ext}"):
-                key = f.stem
-                data_files[key] = f
-        return data_files
+                files[f.stem] = f
+        return files
 
     # --------------------------------------------------------
-    # 2. Load a single dataset (auto Parquet/CSV fallback)
+    # 2. Load dataset (handles split files)
     # --------------------------------------------------------
     def load_dataset(self, name: str) -> pd.DataFrame:
-        """Load one dataset (e.g., train, stores) with automatic Parquet/CSV handling."""
-        files = self.detect_files()
+        """
+        Load a dataset, automatically merging split Parquet files (e.g. train_part1.parquet … train_partN.parquet)
+        while applying region filter and sampling from YAML configuration.
+        """
+        ensure_dir(self.local_dir)
+        part_files = sorted(self.local_dir.glob(f"{name}_part*.parquet"))
+        single_file = self.local_dir / f"{name}.parquet"
 
-        # Auto-create Parquet if none exist but CSVs are present
-        parquet_exists = any(f.suffix == ".parquet" for f in files.values())
-        csv_exists = any(f.suffix == ".csv" for f in files.values())
-
-        if self.use_parquet_first and not parquet_exists and csv_exists:
-            st.info("🧩 No Parquet found — running one-time preprocessing...")
-            self.preprocess_csv_to_parquet()
-            files = self.detect_files()
-
-        # Load according to priority
-        if self.use_parquet_first and f"{name}" in files and files[name].suffix == ".parquet":
-            st.info(f"📦 Loading {name}.parquet ...")
-            return pd.read_parquet(files[name])
-        elif f"{name}" in files:
-            st.info(f"📄 Loading {name}.csv ...")
-            return pd.read_csv(files[name], low_memory=False)
+        if part_files:
+            st.info(f"📦 Found {len(part_files)} parts for {name}. Merging …")
+            dfs = [pd.read_parquet(p) for p in part_files]
+            df = pd.concat(dfs, ignore_index=True)
+        elif single_file.exists():
+            st.info(f"📦 Loading {single_file.name} …")
+            df = pd.read_parquet(single_file)
         else:
-            raise FileNotFoundError(f"Dataset '{name}' not found in {self.local_dir}")
+            csv_file = self.local_dir / f"{name}.csv"
+            if csv_file.exists():
+                st.info(f"📄 Loading {csv_file.name} (CSV fallback) …")
+                df = pd.read_csv(csv_file, low_memory=False)
+            else:
+                raise FileNotFoundError(f"No dataset '{name}' found in {self.local_dir}")
+
+        st.success(f"✅ Loaded {len(df):,} rows, {len(df.columns)} columns.")
+        return df
 
     # --------------------------------------------------------
-    # 3. Preprocess: CSV → Parquet
+    # 3. Preprocess CSV → Parquet
     # --------------------------------------------------------
-
-
     def preprocess_csv_to_parquet(self, files: Optional[list[str]] = None) -> None:
-        """
-        Convert large CSVs to Parquet safely (streaming, resumable, progress-logged).
-        """
-        preprocess_cfg = self.config["preprocess"]
-        if not preprocess_cfg["enabled"]:
+        """Convert CSV files to Parquet, with normalization and progress logging."""
+        cfg = self.config["preprocess"]
+        if not cfg["enabled"]:
             st.info("ℹ️ Preprocessing disabled in config.")
             return
 
-        compression = preprocess_cfg["compression"]
-        chunksize = preprocess_cfg["chunksize_rows"]
-
+        compression = cfg["compression"]
+        chunksize = cfg["chunksize_rows"]
         ensure_dir(self.local_dir)
+
         candidates = list(self.local_dir.glob("*.csv"))
         if files:
             wanted = {f.lower() for f in files}
             candidates = [p for p in candidates if p.name.lower() in wanted]
 
         if not candidates:
-            st.warning("⚠️ No CSVs found.")
+            st.warning("⚠️ No CSVs found for conversion.")
             return
 
         for csv_file in candidates:
@@ -122,17 +120,17 @@ class DataLoader:
             reader = pd.read_csv(csv_file, chunksize=chunksize, low_memory=False)
             writer = None
             total_rows = 0
-            chunk_idx = 0
 
-            for chunk in reader:
-                chunk_idx += 1
+            for chunk_idx, chunk in enumerate(reader, start=1):
                 total_rows += len(chunk)
 
-                if preprocess_cfg["deduplicate"]:
+                # Normalize and clean
+                if cfg["deduplicate"]:
                     chunk = chunk.drop_duplicates()
-                if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
+
+                if cfg["coerce_dates"] and "date" in chunk.columns:
                     chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
-                # --- Normalize 'onpromotion' robustly to nullable boolean ---
+
                 if "onpromotion" in chunk.columns:
                     chunk["onpromotion"] = (
                         chunk["onpromotion"]
@@ -140,39 +138,23 @@ class DataLoader:
                         .str.strip()
                         .str.lower()
                         .replace({"true": True, "false": False, "nan": None, "": None})
-                        .astype("boolean")   # <- wichtig: pandas nullable BooleanDtype
+                        .astype("boolean")
                     )
 
-                # Optional: Date normalisieren
-                if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
-                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
-
-                # Dedupe
-                if preprocess_cfg["deduplicate"]:
-                    chunk = chunk.drop_duplicates()
-
-                # Numerics konsistent
-                for col in chunk.columns:
-                    # NICHT mehr: if chunk[col].dtype == "boolean": chunk[col] = chunk[col].astype("bool")
-                    if pd.api.types.is_float_dtype(chunk[col]):
-                        chunk[col] = chunk[col].astype("float64")
-
-                # Nach Arrow konvertieren
+                # Convert to Arrow table
                 table = pa.Table.from_pandas(chunk, preserve_index=False)
-
                 if writer is None:
                     writer = pq.ParquetWriter(parquet_file, table.schema, compression=compression)
                 else:
-                    # auf initiales Schema casten (erzwingt Konsistenz)
                     table = table.cast(writer.schema)
-
                 writer.write_table(table)
 
                 if chunk_idx % 10 == 0:
-                    st.write(f"   · processed {total_rows:,} rows so far...")
+                    st.write(f"   · processed {total_rows:,} rows so far …")
 
             if writer:
                 writer.close()
+
             dt = time.time() - t0
             size_mb = parquet_file.stat().st_size / 1e6 if parquet_file.exists() else 0
             st.success(f"✅ Done {csv_file.name}: {total_rows:,} rows in {dt:,.1f}s ({size_mb:.1f} MB)")
@@ -186,34 +168,39 @@ class DataLoader:
         if not s_cfg["enabled"]:
             return df
 
-        st.info("🔍 Applying sampling...")
+        st.info("🔍 Applying sampling …")
         if s_cfg["mode"] == "frac":
             df = df.sample(frac=s_cfg["frac"], random_state=42)
         else:
             df = df.sample(n=min(len(df), s_cfg["n_rows"]), random_state=42)
+
         st.success(f"✅ Sampled {len(df):,} rows.")
         return df
 
     # --------------------------------------------------------
-    # 5. Region filtering
+    # 5. Region filtering (from YAML)
     # --------------------------------------------------------
     def apply_region_filter(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Filter by region.column and region.value if provided."""
+        """Filter dataset by region.column/value if configured."""
         r_cfg = self.config["region"]
-        col, val = r_cfg["column"], r_cfg["value"]
+        col, val = r_cfg.get("column"), r_cfg.get("value")
+
         if not col or not val:
             return df
         if col not in df.columns:
             st.warning(f"⚠️ Column '{col}' not found in dataset.")
             return df
-        st.info(f"🌎 Filtering by {col} = '{val}' ...")
-        return df[df[col] == val]
+
+        st.info(f"🌎 Filtering by {col} = '{val}' …")
+        df = df[df[col] == val]
+        st.success(f"✅ Filtered to {len(df):,} rows.")
+        return df
 
     # --------------------------------------------------------
-    # 6. Master load function
+    # 6. High-level convenience method
     # --------------------------------------------------------
     def load_train_data(self) -> pd.DataFrame:
-        """Load, preprocess (if needed), sample, and filter train data."""
+        """Load, merge, region-filter and sample train data."""
         df = self.load_dataset("train")
         df = self.apply_region_filter(df)
         df = self.apply_sampling(df)
@@ -224,13 +211,13 @@ class DataLoader:
 # --- Streamlit integration helper
 # ============================================================
 
-def render_data_section_ui():
+def render_data_section_ui() -> None:
     """Streamlit UI to trigger data-related actions."""
     st.header("📂 Data Management")
 
     loader = DataLoader()
-
     col1, col2 = st.columns(2)
+
     if col1.button("⚙️ Preprocess CSV → Parquet"):
         loader.preprocess_csv_to_parquet()
     if col2.button("📊 Load Train Sample"):
