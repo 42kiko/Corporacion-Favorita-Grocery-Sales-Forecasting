@@ -37,18 +37,6 @@ def ensure_dir(path: Path) -> None:
     """Ensure directory exists."""
     path.mkdir(parents=True, exist_ok=True)
 
-
-def download_from_drive(folder_link: str, dest: Path) -> None:
-    """Download all CSVs from Google Drive folder using gdown."""
-    if not folder_link:
-        st.warning("No Google Drive link provided.")
-        return
-    ensure_dir(dest)
-    st.info(f"📥 Downloading data from Google Drive to {dest} ...")
-    gdown.download_folder(url=folder_link, output=str(dest), quiet=False, use_cookies=False)
-    st.success("✅ Download complete!")
-
-
 # ============================================================
 # --- Core Data Loader
 # ============================================================
@@ -79,12 +67,6 @@ class DataLoader:
     def load_dataset(self, name: str) -> pd.DataFrame:
         """Load one dataset (e.g., train, stores) with automatic Parquet/CSV handling."""
         files = self.detect_files()
-
-        # Attempt auto-download if no data found
-        if not files:
-            st.warning("⚠️ No data files found locally. Attempting Drive download...")
-            download_from_drive(self.drive_link, self.local_dir)
-            files = self.detect_files()
 
         # Auto-create Parquet if none exist but CSVs are present
         parquet_exists = any(f.suffix == ".parquet" for f in files.values())

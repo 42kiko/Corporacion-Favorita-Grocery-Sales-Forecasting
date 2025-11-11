@@ -3,7 +3,6 @@
 
 source:
   local_dir:           {type: str,   default: "data", help: "Local folder with CSV/Parquet files."}
-  drive_link:          {type: str,   default: "",     help: "Optional Google Drive folder (fallback)."}
   use_parquet_first:   {type: bool,  default: true,   help: "Prefer preprocessed Parquet over CSV if available."}
 
 preprocess:

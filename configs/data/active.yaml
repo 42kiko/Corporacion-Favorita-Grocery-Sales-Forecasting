@@ -1,6 +1,5 @@
 source:
   local_dir: data
-  drive_link: "https://drive.google.com/drive/folders/1ATAQgxi1W71opKekI-MNLQc93p8mwb_c"
   use_parquet_first: true
 
 preprocess:
