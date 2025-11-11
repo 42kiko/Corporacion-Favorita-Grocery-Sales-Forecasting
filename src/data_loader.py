@@ -93,23 +93,26 @@ class DataLoader:
     # 3. Preprocess CSV → Parquet
     # --------------------------------------------------------
     def preprocess_csv_to_parquet(self, files: Optional[list[str]] = None) -> None:
-        """Convert CSV files to Parquet, with normalization and progress logging."""
-        cfg = self.config["preprocess"]
-        if not cfg["enabled"]:
+        """
+        Convert large CSVs to Parquet safely (streaming + schema-stable)
+        and perform a final global deduplication if enabled in config.
+        """
+        preprocess_cfg = self.config["preprocess"]
+        if not preprocess_cfg["enabled"]:
             st.info("ℹ️ Preprocessing disabled in config.")
             return
 
-        compression = cfg["compression"]
-        chunksize = cfg["chunksize_rows"]
-        ensure_dir(self.local_dir)
+        compression = preprocess_cfg["compression"]
+        chunksize = preprocess_cfg["chunksize_rows"]
 
+        ensure_dir(self.local_dir)
         candidates = list(self.local_dir.glob("*.csv"))
         if files:
             wanted = {f.lower() for f in files}
             candidates = [p for p in candidates if p.name.lower() in wanted]
 
         if not candidates:
-            st.warning("⚠️ No CSVs found for conversion.")
+            st.warning("⚠️ No CSVs found.")
             return
 
         for csv_file in candidates:
@@ -118,19 +121,15 @@ class DataLoader:
             t0 = time.time()
 
             reader = pd.read_csv(csv_file, chunksize=chunksize, low_memory=False)
-            writer = None
+            writer: Optional[pq.ParquetWriter] = None
             total_rows = 0
+            chunk_idx = 0
 
-            for chunk_idx, chunk in enumerate(reader, start=1):
+            for chunk in reader:
+                chunk_idx += 1
                 total_rows += len(chunk)
 
-                # Normalize and clean
-                if cfg["deduplicate"]:
-                    chunk = chunk.drop_duplicates()
-
-                if cfg["coerce_dates"] and "date" in chunk.columns:
-                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
-
+                # --- Normalize 'onpromotion' BEFORE deduplication ---
                 if "onpromotion" in chunk.columns:
                     chunk["onpromotion"] = (
                         chunk["onpromotion"]
@@ -138,26 +137,55 @@ class DataLoader:
                         .str.strip()
                         .str.lower()
                         .replace({"true": True, "false": False, "nan": None, "": None})
-                        .astype("boolean")
+                        .fillna("false")  # ensure no NA left for dedup
+                        .replace({"false": False, "true": True})
+                        .astype(bool)
                     )
 
-                # Convert to Arrow table
+                # --- Coerce dates before deduplication ---
+                if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
+                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
+
+                # --- Now safe deduplication ---
+                if preprocess_cfg["deduplicate"]:
+                    key_cols = [c for c in ["id", "date", "store_nbr"] if c in chunk.columns]
+                    if key_cols:
+                        chunk = chunk.drop_duplicates(subset=key_cols, keep="first")
+
+                # --- Normalize numeric consistency ---
+                for col in chunk.columns:
+                    if pd.api.types.is_float_dtype(chunk[col]):
+                        chunk[col] = chunk[col].astype("float64")
+
+                # → Arrow Table
                 table = pa.Table.from_pandas(chunk, preserve_index=False)
+
+                # Maintain schema stability
                 if writer is None:
                     writer = pq.ParquetWriter(parquet_file, table.schema, compression=compression)
                 else:
                     table = table.cast(writer.schema)
+
                 writer.write_table(table)
 
                 if chunk_idx % 10 == 0:
-                    st.write(f"   · processed {total_rows:,} rows so far …")
+                    st.write(f"   · processed {total_rows:,} rows so far...")
 
             if writer:
                 writer.close()
 
-            dt = time.time() - t0
-            size_mb = parquet_file.stat().st_size / 1e6 if parquet_file.exists() else 0
-            st.success(f"✅ Done {csv_file.name}: {total_rows:,} rows in {dt:,.1f}s ({size_mb:.1f} MB)")
+            # --- Global deduplication after all chunks ---
+            if preprocess_cfg["deduplicate"]:
+                st.info("🧹 Performing global deduplication (after merge)...")
+                df_full = pd.read_parquet(parquet_file)
+                before = len(df_full)
+                key_cols = [c for c in ["id", "date", "store_nbr"] if c in df_full.columns]
+                if key_cols:
+                    df_full = df_full.drop_duplicates(subset=key_cols, keep="first")
+                after = len(df_full)
+                df_full.to_parquet(parquet_file, compression=compression, index=False)
+                st.success(f"✅ Global deduplication: {before:,} → {after:,} rows.")
+
 
     # --------------------------------------------------------
     # 4. Sampling logic
