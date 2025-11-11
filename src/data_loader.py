@@ -94,16 +94,21 @@ class DataLoader:
     # --------------------------------------------------------
     def preprocess_csv_to_parquet(self, files: Optional[list[str]] = None) -> None:
         """
-        Convert large CSVs to Parquet safely (streaming + schema-stable)
-        and perform a final global deduplication if enabled in config.
+        Convert large CSVs into Parquet parts or partitioned datasets.
+        - Supports partitioning by ['year','month'] or other columns
+        - Ensures schema consistency, deduplication, and boolean/date normalization
+        - Writes to multiple Parquet parts or partition folders
         """
         preprocess_cfg = self.config["preprocess"]
-        if not preprocess_cfg["enabled"]:
+        if not preprocess_cfg.get("enabled", False):
             st.info("ℹ️ Preprocessing disabled in config.")
             return
 
-        compression = preprocess_cfg["compression"]
-        chunksize = preprocess_cfg["chunksize_rows"]
+        compression = preprocess_cfg.get("compression", "zstd")
+        chunksize = preprocess_cfg.get("chunksize_rows", 1_000_000)
+        part_size = preprocess_cfg.get("part_size_rows", 5_000_000)
+        partition_cols = preprocess_cfg.get("partition_by", [])
+        dedup_global = preprocess_cfg.get("deduplicate_global", True)
 
         ensure_dir(self.local_dir)
         candidates = list(self.local_dir.glob("*.csv"))
@@ -112,24 +117,31 @@ class DataLoader:
             candidates = [p for p in candidates if p.name.lower() in wanted]
 
         if not candidates:
-            st.warning("⚠️ No CSVs found.")
+            st.warning("⚠️ No CSV files found.")
             return
 
         for csv_file in candidates:
-            parquet_file = self.local_dir / f"{csv_file.stem}.parquet"
-            st.write(f"➡️ {csv_file.name} → {parquet_file.name}")
+            base_name = csv_file.stem
+            st.write(f"➡️ Processing {csv_file.name} …")
             t0 = time.time()
 
             reader = pd.read_csv(csv_file, chunksize=chunksize, low_memory=False)
-            writer: Optional[pq.ParquetWriter] = None
+            buffer: list[pd.DataFrame] = []
             total_rows = 0
-            chunk_idx = 0
+            part_idx = 1
 
             for chunk in reader:
-                chunk_idx += 1
                 total_rows += len(chunk)
 
-                # --- Normalize 'onpromotion' BEFORE deduplication ---
+                # --- Step 1: Light cleaning ---
+                if preprocess_cfg.get("deduplicate", True):
+                    key_cols = [c for c in ["id", "date", "store_nbr"] if c in chunk.columns]
+                    if key_cols:
+                        chunk = chunk.drop_duplicates(subset=key_cols, keep="first")
+
+                if preprocess_cfg.get("coerce_dates", True) and "date" in chunk.columns:
+                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
+
                 if "onpromotion" in chunk.columns:
                     chunk["onpromotion"] = (
                         chunk["onpromotion"]
@@ -137,55 +149,86 @@ class DataLoader:
                         .str.strip()
                         .str.lower()
                         .replace({"true": True, "false": False, "nan": None, "": None})
-                        .fillna("false")  # ensure no NA left for dedup
-                        .replace({"false": False, "true": True})
-                        .astype(bool)
+                        .astype("boolean")
                     )
 
-                # --- Coerce dates before deduplication ---
-                if preprocess_cfg["coerce_dates"] and "date" in chunk.columns:
-                    chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
+                # --- Step 2: Add partition columns dynamically ---
+                if partition_cols and "date" in chunk.columns:
+                    if "year" in partition_cols and "year" not in chunk.columns:
+                        chunk["year"] = chunk["date"].dt.year
+                    if "month" in partition_cols and "month" not in chunk.columns:
+                        chunk["month"] = chunk["date"].dt.month
+                    if "day" in partition_cols and "day" not in chunk.columns:
+                        chunk["day"] = chunk["date"].dt.day
 
-                # --- Now safe deduplication ---
-                if preprocess_cfg["deduplicate"]:
-                    key_cols = [c for c in ["id", "date", "store_nbr"] if c in chunk.columns]
-                    if key_cols:
-                        chunk = chunk.drop_duplicates(subset=key_cols, keep="first")
+                buffer.append(chunk)
 
-                # --- Normalize numeric consistency ---
-                for col in chunk.columns:
-                    if pd.api.types.is_float_dtype(chunk[col]):
-                        chunk[col] = chunk[col].astype("float64")
+                # --- Step 3: Write Parquet when buffer is full ---
+                if sum(len(b) for b in buffer) >= part_size:
+                    part_df = pd.concat(buffer, ignore_index=True)
+                    buffer.clear()
 
-                # → Arrow Table
-                table = pa.Table.from_pandas(chunk, preserve_index=False)
+                    if partition_cols:
+                        # Partitioned write
+                        table = pa.Table.from_pandas(part_df, preserve_index=False)
+                        pq.write_to_dataset(
+                            table,
+                            root_path=self.local_dir / base_name,
+                            partition_cols=partition_cols,
+                            compression=compression
+                        )
+                        st.write(f"🧩 Wrote partitioned chunk ({len(part_df):,} rows)")
+                    else:
+                        # Classic part file
+                        parquet_file = self.local_dir / f"{base_name}_part{part_idx}.parquet"
+                        table = pa.Table.from_pandas(part_df, preserve_index=False)
+                        pq.write_table(table, parquet_file, compression=compression)
+                        st.write(f"🧩 Wrote {parquet_file.name} ({len(part_df):,} rows)")
+                        part_idx += 1
 
-                # Maintain schema stability
-                if writer is None:
-                    writer = pq.ParquetWriter(parquet_file, table.schema, compression=compression)
+            # --- Step 4: Write leftovers ---
+            if buffer:
+                part_df = pd.concat(buffer, ignore_index=True)
+                if partition_cols:
+                    table = pa.Table.from_pandas(part_df, preserve_index=False)
+                    pq.write_to_dataset(
+                        table,
+                        root_path=self.local_dir / base_name,
+                        partition_cols=partition_cols,
+                        compression=compression
+                    )
+                    st.write(f"🧩 Wrote final partitioned chunk ({len(part_df):,} rows)")
                 else:
-                    table = table.cast(writer.schema)
+                    parquet_file = self.local_dir / f"{base_name}_part{part_idx}.parquet"
+                    table = pa.Table.from_pandas(part_df, preserve_index=False)
+                    pq.write_table(table, parquet_file, compression=compression)
+                    st.write(f"🧩 Wrote {parquet_file.name} ({len(part_df):,} rows)")
 
-                writer.write_table(table)
+            dt = time.time() - t0
+            st.success(f"✅ Done: {base_name} processed in {dt:,.1f}s")
 
-                if chunk_idx % 10 == 0:
-                    st.write(f"   · processed {total_rows:,} rows so far...")
+            # --- Step 5: Optional global deduplication ---
+            if dedup_global:
+                all_parts = sorted(self.local_dir.glob(f"{base_name}_part*.parquet"))
+                if all_parts:
+                    df_full = pd.concat([pd.read_parquet(p) for p in all_parts], ignore_index=True)
+                    before = len(df_full)
+                    key_cols = [c for c in ["id", "date", "store_nbr"] if c in df_full.columns]
+                    if key_cols:
+                        df_full = df_full.drop_duplicates(subset=key_cols, keep="first")
+                        after = len(df_full)
+                        st.info(f"🧹 Global deduplication: {before:,} → {after:,} rows")
+                        # rewrite
+                        for old in all_parts:
+                            old.unlink(missing_ok=True)
+                        for i in range(0, len(df_full), part_size):
+                            part_df = df_full.iloc[i:i+part_size]
+                            out_path = self.local_dir / f"{base_name}_part{i//part_size + 1}.parquet"
+                            table = pa.Table.from_pandas(part_df, preserve_index=False)
+                            pq.write_table(table, out_path, compression=compression)
+                            st.write(f"💾 Rewrote {out_path.name} ({len(part_df):,} rows)")
 
-            if writer:
-                writer.close()
-
-            # --- Global deduplication after all chunks ---
-            if preprocess_cfg["deduplicate"]:
-                st.info("🧹 Performing global deduplication (after merge)...")
-                df_full = pd.read_parquet(parquet_file)
-                before = len(df_full)
-                key_cols = [c for c in ["id", "date", "store_nbr"] if c in df_full.columns]
-                if key_cols:
-                    df_full = df_full.drop_duplicates(subset=key_cols, keep="first")
-                after = len(df_full)
-                df_full.to_parquet(parquet_file, compression=compression, index=False)
-                st.success(f"✅ Global deduplication: {before:,} → {after:,} rows.")
-
+            st.success(f"🎯 Finalized {base_name}")
 
     # --------------------------------------------------------
     # 4. Sampling logic

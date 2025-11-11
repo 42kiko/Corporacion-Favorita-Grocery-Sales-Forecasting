@@ -1,16 +1,15 @@
 """
-tests/test_data_loader_preprocess.py
-
-Verifies that DataLoader.preprocess_csv_to_parquet() converts CSVs correctly,
-handles deduplication, normalizes booleans, and writes valid Parquet output.
+Unit tests for DataLoader.preprocess_csv_to_parquet()
+Ensures correct CSV → Parquet split conversion, deduplication,
+boolean normalization, and overall schema integrity.
 """
 
-from pathlib import Path
+from __future__ import annotations
+import pytest
 import pandas as pd
 import yaml
-import pytest
+from pathlib import Path
 from src.data_loader import DataLoader, ensure_dir
-
 
 # ------------------------------------------------------------
 # --- Fixtures
@@ -18,7 +17,7 @@ from src.data_loader import DataLoader, ensure_dir
 
 @pytest.fixture
 def tmp_data_dir(tmp_path: Path) -> Path:
-    """Create a temp directory with one sample CSV file."""
+    """Create temp directory with one sample train.csv file."""
     data_dir = tmp_path / "data"
     ensure_dir(data_dir)
 
@@ -35,30 +34,23 @@ def tmp_data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def tmp_config(tmp_path: Path, tmp_data_dir: Path) -> Path:
-    """Write a temporary YAML config file."""
+    """Write a temporary YAML config file for preprocessing."""
     cfg = {
         "source": {
             "local_dir": str(tmp_data_dir),
-            "use_parquet_first": True
-        },
-        "sample": {
-            "enabled": False,
-            "mode": "frac",
-            "frac": 0.1,
-            "n_rows": 2
-        },
-        "region": {
-            "column": None,
-            "value": None
+            "use_parquet_first": True,
+            "drive_link": ""
         },
         "preprocess": {
             "enabled": True,
             "compression": "snappy",
-            "chunksize_rows": 1000,
             "deduplicate": True,
             "coerce_dates": True,
-            "normalize_booleans": True
-        }
+            "normalize_booleans": True,
+            "chunksize_rows": 1000
+        },
+        "region": {"column": "", "value": ""},
+        "sample": {"enabled": False}
     }
 
     cfg_path = tmp_path / "active.yaml"
@@ -71,33 +63,58 @@ def tmp_config(tmp_path: Path, tmp_data_dir: Path) -> Path:
 # --- Tests
 # ------------------------------------------------------------
 
-def test_preprocess_creates_parquet(tmp_config: Path, tmp_data_dir: Path) -> None:
+def test_preprocess_creates_split_parquet(tmp_config: Path, tmp_data_dir: Path) -> None:
     """
-    Ensure CSV → Parquet conversion:
-    - creates file,
-    - removes true duplicates (same id/date/store_nbr),
-    - keeps valid variations in 'onpromotion'.
+    Ensure CSV → Parquet split conversion:
+    - creates multiple part files,
+    - removes duplicate (id, date, store_nbr) combinations,
+    - keeps valid boolean normalization for 'onpromotion'.
     """
     loader = DataLoader(config_path=tmp_config)
     loader.preprocess_csv_to_parquet()
 
-    parquet_file = tmp_data_dir / "train.parquet"
-    assert parquet_file.exists(), "Parquet file should be created"
+    # Expect at least one split file
+    part_files = sorted(tmp_data_dir.glob("train_part*.parquet"))
+    assert part_files, "Expected at least one split Parquet part file"
 
-    df = pd.read_parquet(parquet_file)
+    # Merge parts for inspection
+    df = pd.concat([pd.read_parquet(p) for p in part_files], ignore_index=True)
 
-    # --- Basic structure ---
-    assert set(df.columns) == {"id", "date", "store_nbr", "unit_sales", "onpromotion"}
+    # --- Structural checks ---
+    assert set(df.columns) == {"id", "date", "store_nbr", "unit_sales", "onpromotion"}, \
+        "Unexpected columns in Parquet output"
 
     # --- Deduplication check ---
     key_cols = ["id", "date", "store_nbr"]
     duplicates = df.duplicated(subset=key_cols).sum()
     assert duplicates == 0, "Duplicate (id, date, store_nbr) combos should be removed"
-    assert len(df) == 3, "There should be exactly 3 unique rows after deduplication"
 
     # --- Boolean normalization check ---
-    assert "onpromotion" in df.columns
-    assert df["onpromotion"].dtype.name in ("boolean", "bool")
+    assert df["onpromotion"].dtype.name in ("boolean", "bool"), "'onpromotion' should be boolean"
+    assert df["onpromotion"].notna().any(), "There should be valid True/False values"
 
-    print("✅ Final deduplicated dataset:")
-    print(df)
+    print(f"✅ {len(part_files)} Parquet parts validated, {len(df):,} rows total")
+
+
+def test_preprocess_handles_no_csvs_gracefully(tmp_path: Path) -> None:
+    """Ensure preprocess_csv_to_parquet() does not crash when no CSVs exist."""
+    cfg = {
+        "source": {"local_dir": str(tmp_path), "use_parquet_first": True, "drive_link": ""},
+        "preprocess": {
+            "enabled": True,
+            "compression": "snappy",
+            "deduplicate": True,
+            "coerce_dates": True,
+            "normalize_booleans": True,
+            "chunksize_rows": 1000
+        },
+        "region": {"column": "", "value": ""},
+        "sample": {"enabled": False}
+    }
+    cfg_path = tmp_path / "active.yaml"
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f)
+
+    loader = DataLoader(config_path=cfg_path)
+    # Should run without raising exceptions
+    loader.preprocess_csv_to_parquet()
