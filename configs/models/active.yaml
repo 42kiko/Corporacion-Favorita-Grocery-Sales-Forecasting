@@ -1,0 +1,29 @@
+# Active (current) model hyperparameters used by the app.
+
+xgboost:
+  n_estimators: 400
+  learning_rate: 0.05
+  max_depth: 8
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  reg_alpha: 0.0
+  min_child_weight: 1.0
+  objective: reg:squarederror
+  # Optional manual override (normally set automatically by code):
+  # tree_method: gpu_hist
+  # predictor: gpu_predictor
+  # n_jobs: 0
+
+linear:
+  fit_intercept: true
+  positive: false
+
+sarima:
+  order_p: 1
+  order_d: 1
+  order_q: 1
+  seas_p: 0
+  seas_d: 1
+  seas_q: 1
+  seas_m: 7

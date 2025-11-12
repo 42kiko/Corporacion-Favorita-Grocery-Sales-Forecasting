@@ -1,0 +1,43 @@
+# Full option space (schema) for feature engineering with UI metadata.
+
+calendar:
+  enabled:    {type: bool,  default: true}
+  fields:     {type: str_list, default: ["year","quarter","month","iso_week","day","dayofweek","is_weekend","is_month_start","is_month_end"]}
+
+lags:
+  enabled:    {type: bool,  default: true}
+  values:     {type: int_list, min: 1, max: 120, default: [1,2,3,7,14,28,35,56]}
+
+rolling:
+  enabled:    {type: bool,  default: true}
+  windows:    {type: int_list, min: 2, max: 180, default: [7,28]}
+  stats:      {type: str_list, default: ["mean","std"]}   # allowed: mean,std,min,max,median
+
+expanding:
+  enabled:    {type: bool,  default: false}
+  stats:      {type: str_list, default: ["mean"]}
+
+holidays:
+  enabled:        {type: bool, default: true}
+  proximity_days: {type: int,  min: 0, max: 30, default: 3}
+
+exogenous:
+  oil:
+    enabled:          {type: bool, default: true}
+    lags:             {type: int_list, min: 1, max: 120, default: [1,7,28]}
+    rolling_windows:  {type: int_list, min: 2, max: 180, default: [7]}
+  transactions:
+    enabled:          {type: bool, default: true}
+    lags:             {type: int_list, min: 1, max: 120, default: [1,7]}
+    rolling_windows:  {type: int_list, min: 2, max: 180, default: [7]}
+
+categoricals:
+  enabled:  {type: bool, default: true}
+  columns:  {type: str_list, default: ["store_nbr","item_nbr","family","class","city","state","type","cluster"]}
+
+interactions:
+  enabled:  {type: bool, default: false}
+  pairs:    {type: str_list, default: ["lag_1*onpromotion","rmean_7*month"]}
+
+target:
+  transform: {type: str, choices: ["none","log1p"], default: "none"}

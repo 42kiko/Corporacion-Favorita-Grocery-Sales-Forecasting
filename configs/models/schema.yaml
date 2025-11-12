@@ -1,0 +1,26 @@
+# Full option space (schema) for model hyperparameters and UI hints.
+
+xgboost:
+  n_estimators:      {type: int,   min: 50,   max: 5000, default: 400, step: 50}
+  learning_rate:     {type: float, min: 0.001, max: 0.5,  default: 0.05, step: 0.01}
+  max_depth:         {type: int,   min: 1,    max: 24,   default: 8,  step: 1}
+  subsample:         {type: float, min: 0.1,  max: 1.0,  default: 0.8, step: 0.05}
+  colsample_bytree:  {type: float, min: 0.1,  max: 1.0,  default: 0.8, step: 0.05}
+  reg_lambda:        {type: float, min: 0.0,  max: 100.0, default: 1.0, step: 0.1}
+  reg_alpha:         {type: float, min: 0.0,  max: 100.0, default: 0.0, step: 0.1}
+  min_child_weight:  {type: float, min: 0.0,  max: 20.0,  default: 1.0, step: 0.5}
+  objective:         {type: str, choices: ["reg:squarederror","reg:pseudohubererror"], default: "reg:squarederror"}
+  # tree_method/predictor/n_jobs are auto-set by code (GPU/CPU) unless explicitly provided.
+
+linear:
+  fit_intercept: {type: bool, default: true}
+  positive:      {type: bool, default: false}
+
+sarima:
+  order_p:   {type: int,   min: 0, max: 5, default: 1}
+  order_d:   {type: int,   min: 0, max: 2, default: 1}
+  order_q:   {type: int,   min: 0, max: 5, default: 1}
+  seas_p:    {type: int,   min: 0, max: 5, default: 0}
+  seas_d:    {type: int,   min: 0, max: 2, default: 1}
+  seas_q:    {type: int,   min: 0, max: 5, default: 1}
+  seas_m:    {type: int,   min: 1, max: 365, default: 7}

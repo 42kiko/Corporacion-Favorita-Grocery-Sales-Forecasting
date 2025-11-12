@@ -1,0 +1,42 @@
+source:
+  local_dir: /Users/kiko/Desktop/github/Corporacion-Favorita-Grocery-Sales-Forecasting/data
+  use_parquet_first: true
+preprocess:
+  enabled: true
+  partition_by: []
+  compression: zstd
+  deduplicate: true
+  coerce_dates: true
+  normalize_booleans: true
+  chunksize_rows: 2_000_000
+  part_size_rows: 25_000_000
+  deduplicate_global: true
+window:
+  mode: months
+  months: 12
+  horizon_days: 14
+region:
+  column: state
+  value: Pichincha
+  extra_filters: []
+sample:
+  enabled: false
+  mode: frac
+  frac: 0.01
+  n_rows: 50000
+  stratify_by: ''
+test_data:
+  prefer_local: true
+  allow_manual_upload: true
+  align_on:
+  - date
+  - store_nbr
+  - item_nbr
+validation:
+  require_core_files:
+  - train.csv
+  - items.csv
+  - stores.csv
+  - oil.csv
+  - holidays_events.csv
+  - transactions.csv
