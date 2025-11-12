@@ -8,8 +8,8 @@ preprocess:
   deduplicate: true
   coerce_dates: true
   normalize_booleans: true
-  chunksize_rows: 1000000
-  part_size_rows: 5000000
+  chunksize_rows: 2_000_000
+  part_size_rows: 25_000_000
   deduplicate_global: true
 window:
   mode: months
