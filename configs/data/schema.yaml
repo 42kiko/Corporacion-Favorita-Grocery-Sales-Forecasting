@@ -1,0 +1,45 @@
+# Full option space (schema) for data loading, preprocessing and slicing.
+# The UI reads this to render controls; active values live in configs/data/active.yaml.
+
+source:
+  local_dir:           {type: str,   default: "data", help: "Local folder with CSV/Parquet files."}
+  use_parquet_first:   {type: bool,  default: true,   help: "Prefer preprocessed Parquet over CSV if available."}
+
+preprocess:
+  enabled:             {type: bool,  default: true,   help: "Allow one-time CSV→Parquet preprocessing."}
+  partition_by:        {type: str_list, default: ["year","month"], choices: ["year","month","store_nbr","state","city","family","cluster"], help: "Columns to partition Parquet for faster slicing (avoid very high-cardinality unless needed)."}
+  compression:         {type: str,   default: "zstd", choices: ["zstd","snappy","gzip"], help: "Parquet compression codec."}
+  deduplicate:         {type: bool,  default: true,   help: "Drop exact duplicate rows where safe."}
+  coerce_dates:        {type: bool,  default: true,   help: "Parse/normalize date columns."}
+  normalize_booleans:  {type: bool,  default: true,   help: "Ensure boolean-like columns are 0/1."}
+  chunksize_rows:      {type: int,   default: 1_000_000, min: 50_000, max: 5_000_000, step: 50_000, help: "Chunked CSV read to control memory."}
+
+window:
+  mode:                {type: str,   default: "months", choices: ["months","full"], help: "Time window selection mode."}
+  months:              {type: int,   default: 12, min: 1, max: 120, step: 1, help: "Used when mode == months."}
+  horizon_days:        {type: int,   default: 14, min: 1, max: 180, step: 1, help: "Default forecast horizon for UI."}
+
+region:
+  # NOTE: 'column' choices should be populated dynamically from stores/items metadata in the app.
+  column:              {type: str,   default: "", choices: [], help: "e.g., state, city, cluster; empty = no filter."}
+  value:               {type: str,   default: "", help: "Specific region value; empty = no filter."}
+  # Optional: allow advanced multi-filter
+  extra_filters:       {type: kv_list, default: [], help: "Optional list of {column: value} filters, applied in AND fashion."}
+
+sample:
+  enabled:             {type: bool,  default: false, help: "Use sampling for quick end-to-end runs."}
+  mode:                {type: str,   default: "frac", choices: ["frac","n_rows"], help: "Sampling mode."}
+  frac:                {type: float, default: 0.01, min: 0.001, max: 1.0, step: 0.001, help: "Fraction when mode=frac."}
+  n_rows:              {type: int,   default: 50000, min: 1000, max: 5_000_000, step: 1000, help: "Row limit when mode=n_rows."}
+  stratify_by:         {type: str,   default: "", help: "Optional column to stratify sampling (e.g., store_nbr)."}
+
+test_data:
+  prefer_local:        {type: bool,  default: true,  help: "Use local test if present."}
+  allow_manual_upload: {type: bool,  default: true,  help: "Enable manual test upload in UI."}
+  align_on:            {type: str_list, default: ["date","store_nbr","item_nbr"], help: "Join keys to align forecast with ground truth."}
+
+validation:
+  # App-level guards; the UI can show warnings if violated.
+  require_core_files:  {type: str_list, default: ["train.csv","items.csv","stores.csv","oil.csv","holidays_events.csv","transactions.csv"], help: "Core CSV names expected if Parquet is missing."}
+  min_date:            {type: str,   default: "", help: "Optional ISO date lower bound check."}
+  max_date:            {type: str,   default: "", help: "Optional ISO date upper bound check."}
