@@ -1,16 +1,25 @@
-# Corporacion Favorita Sales Forecasting with Streamlit
+# 📦 Corporación Favorita Grocery Sales Forecasting
+A modular, clean, and scalable forecasting pipeline with Streamlit, Plotly, and Parquet preprocessing.
 
 ---
 
-Welcome to my Project
+## 👋 Welcome to the Project
 
+This repository implements a fully structured data-science workflow for the **Kaggle Corporación Favorita Sales Forecasting** dataset, including:
+
+- efficient **CSV → Parquet preprocessing**
+- modular **data loading and region filtering**
+- rich **Exploratory Data Analysis** (overview + deep dive)
+- reusable **Plotly functions** for both notebooks and Streamlit
+- a future interactive **Streamlit forecasting app**
+
+All components follow a clean, maintainable architecture so you can reuse them across multiple projects.
 
 ---
 
+## 🚀 Quickstart
 
-# Run it!
-
-# macOS (zsh or bash)
+### macOS (zsh / bash)
 ```bash
 python3 -m venv .venv && \
 source .venv/bin/activate && \
@@ -18,9 +27,7 @@ python -m pip install --upgrade pip && \
 pip install -e ".[dev]"
 ```
 
-
-
-# Windows PowerShell
+### Windows PowerShell
 ```bash
 python -m venv .venv; `
 . .\.venv\Scripts\Activate.ps1; `
@@ -28,23 +35,27 @@ python -m pip install --upgrade pip; `
 pip install -e ".[dev]"
 ```
 
-
-
-# Windows CMD
+### Windows CMD
 ```bash
 python -m venv .venv && .\.venv\Scripts\activate && python -m pip install --upgrade pip && pip install -e ".[dev]"
 ```
 
+⸻
 
+## 🧠 VS Code Interpreter Setup
 
-# maybe under vs code you need to set the interpreter manuell
+If VS Code does not automatically select the correct Python interpreter:
 
- ```bash
-# open command palett under vs code
+```bash
+# Open Command Palette:
 cmd + shift + p
-```
 
+# Then search for:
+"Python: Select Interpreter"
+```
 ![Alt-Text](img/select-interpreter.png "Select Interpreter VS Code")
+⸻
+
 
 
 
