@@ -3,28 +3,39 @@ A modular, clean, and scalable forecasting pipeline with Streamlit, Plotly, and 
 
 ---
 
-## 👋 Welcome to the Project
-
-This repository implements a fully structured data-science workflow for the **Kaggle Corporación Favorita Sales Forecasting** dataset, including:
-
-- efficient **CSV → Parquet preprocessing**
-- modular **data loading and region filtering**
-- rich **Exploratory Data Analysis** (overview + deep dive)
-- reusable **Plotly functions** for both notebooks and Streamlit
-- a future interactive **Streamlit forecasting app**
-
-All components follow a clean, maintainable architecture so you can reuse them across multiple projects.
+# 📚 Table of Contents
+1. [Welcome](#-welcome)
+2. [Quickstart](#-quickstart)
+3. [VS Code Interpreter](#-vs-code-interpreter)
+4. [EDA Notebooks](#-eda-notebooks)
+5. [Overview EDA](#-1-overview-eda)
+6. [Deep Dive EDA](#-2-deep-dive-eda)
+7. [Seasonality Analysis](#-3-seasonality-analysis)
 
 ---
 
-## 🚀 Quickstart
+# 👋 Welcome
+
+This repository contains a fully structured data-science workflow for the **Kaggle Corporación Favorita Sales Forecasting** challenge.
+
+Included:
+
+- ⚡ Efficient CSV → Parquet preprocessing
+- 📂 Modular data loading & YAML config-based filtering
+- 📊 Two-level Exploratory Data Analysis (Overview + Deep Dive)
+- 🎨 Reusable Plotly charts (also usable in a future Streamlit app)
+- 📈 Dedicated notebook for Seasonality & STL decomposition
+- 🖥️ Future-ready Streamlit forecasting dashboard
+
+All components follow a clean, maintainable architecture designed for reusability.
+
+---
+
+# 🚀 Quickstart
 
 ### macOS (zsh / bash)
 ```bash
-python3 -m venv .venv && \
-source .venv/bin/activate && \
-python -m pip install --upgrade pip && \
-pip install -e ".[dev]"
+python3 -m venv .venv && source .venv/bin/activate && python -m pip install --upgrade pip && pip install -e ".[dev]"
 ```
 
 ### Windows PowerShell
@@ -37,45 +48,42 @@ pip install -e ".[dev]"
 
 ### Windows CMD
 ```bash
-python -m venv .venv && .\.venv\Scripts\activate && python -m pip install --upgrade pip && pip install -e ".[dev]"
-```
-
-⸻
-
-## 🧠 VS Code Interpreter Setup
-
-If VS Code does not automatically select the correct Python interpreter:
-
-```bash
-# Open Command Palette:
-cmd + shift + p
-
-# Then search for:
-"Python: Select Interpreter"
-```
-![Alt-Text](img/select-interpreter.png "Select Interpreter VS Code")
-⸻
-
-
-
-
-# EDA Notebook
-
- ```bash
-# if you want run the intery project with the notebooks and create img and reports use the [viz]
-pip install -e ".[viz,dev]"
+python -m venv .venv && .\.venv\Scriptsctivate && python -m pip install --upgrade pip && pip install -e ".[dev]"
 ```
 
 ---
 
-# 📊 Exploratory Data Analysis Dashboard
+# 🧠 VS Code Interpreter
 
-This section summarizes the main visual insights generated in the EDA notebooks.
-It is structured into:
+If VS Code does not automatically select the correct Python interpreter:
 
-- **Overview EDA** – high-level behavior across stores, items, time and promotions
-- **Deep Dive EDA** – focused views on holidays, oil, items, stores, train and transactions
+```bash
+cmd + shift + p
+```
 
+Then search for:
+
+```text
+Python: Select Interpreter
+```
+
+![Interpreter](img/select-interpreter.png)
+
+---
+
+# 📊 EDA Notebooks
+
+To run the project with visualization dependencies (and let notebooks save images into `img/reports/...`):
+
+```bash
+pip install -e ".[viz,dev]"
+```
+
+This enables:
+
+- Automatic saving of EDA plots
+- Plotly-based visualizations
+- A clean environment for notebooks
 
 ---
 
@@ -91,6 +99,7 @@ It is structured into:
 | ------------ | ----------------------- |
 | ![](img/reports/eda_overview/top_30_items.png) | ![](img/reports/eda_overview/unit_sales_distribution.png) |
 
+---
 
 ## 📈 Sales Patterns & Seasonality
 
@@ -98,10 +107,9 @@ It is structured into:
 | --------------------- | ---------------------------- |
 | ![](img/reports/eda_overview/total_sales_over_time.png) | ![](img/reports/eda_overview/avg_sales_by_dayofweek.png) |
 
-| Promotions vs. sales impact |
-| --------------------------- |
+| Promotions vs. sales |
+| -------------------- |
 | ![](img/reports/eda_overview/promo_vs_sales.png) |
-
 
 ---
 
@@ -113,13 +121,15 @@ It is structured into:
 | ------------------------------ |
 | ![](img/reports/eda_deepdive/items/items_family_top40.png) |
 
+---
 
 ## 💵 Oil Prices
 
-| Oil price timeseries |
-| -------------------- |
+| Oil price time series |
+| ---------------------- |
 | ![](img/reports/eda_deepdive/oil/oil_price_timeseries.png) |
 
+---
 
 ## 🎉 Holidays
 
@@ -127,6 +137,7 @@ It is structured into:
 | ------------------ |
 | ![](img/reports/eda_deepdive/holidays_events/holidays_by_locale.png) |
 
+---
 
 ## 🏙️ Stores
 
@@ -134,6 +145,7 @@ It is structured into:
 | --------------- |
 | ![](img/reports/eda_deepdive/stores/stores_per_city.png) |
 
+---
 
 ## 🛒 Train Dataset (Sales Deep Dive)
 
@@ -145,6 +157,7 @@ It is structured into:
 | ------------------------------ | -------------------------------- |
 | ![](img/reports/eda_deepdive/train/train_top30_items_by_rows.png) | ![](img/reports/eda_deepdive/train/train_top30_stores_by_rows.png) |
 
+---
 
 ## 💳 Transactions
 
@@ -152,8 +165,63 @@ It is structured into:
 | ------------------------ |
 | ![](img/reports/eda_deepdive/transactions/transactions_daily_total.png) |
 
+---
+
+# 🟧 3. Seasonality Analysis
+
+Understanding weekly, monthly, and long-term patterns in the sales time series.
+
+This analysis includes:
+
+- Daily aggregated sales
+- Rolling averages (7, 30, 90 days)
+- Weekly seasonality
+- Monthly seasonality
+- Month × weekday interaction (heatmap)
+- STL decomposition (trend, seasonal, residual)
+
+All generated in the dedicated seasonality notebook.
 
 ---
 
-All plots shown here are generated by the EDA notebooks and saved under
-`img/reports/eda_overview` and `img/reports/eda_deepdive`.
+## 📆 Daily Sales & Trends
+
+| Rolling averages |
+| ---------------- |
+| ![](img/reports/seasonality/seasonality_rolling_averages.png) |
+
+---
+
+## 📅 Weekly & Monthly Patterns
+
+| Weekday pattern | Monthly pattern |
+| --------------- | --------------- |
+| ![](img/reports/seasonality/seasonality_weekday_pattern.png) | ![](img/reports/seasonality/seasonality_monthly_pattern.png) |
+
+---
+
+## 🔥 Month × Weekday Heatmap
+
+| Month × weekday heatmap |
+| ------------------------ |
+| ![](img/reports/seasonality/seasonality_month_weekday_heatmap.png) |
+
+---
+
+## 🔍 STL Decomposition
+
+| Observed vs trend | Seasonal component | Residuals |
+| ----------------- | ------------------ | --------- |
+| ![](img/reports/seasonality/seasonality_stl_observed_trend.png) | ![](img/reports/seasonality/seasonality_stl_seasonal_component.png) | ![](img/reports/seasonality/seasonality_stl_residuals.png) |
+
+---
+
+All plots are exported into:
+
+```text
+img/reports/eda_overview/
+img/reports/eda_deepdive/
+img/reports/seasonality/
+```
+
+These assets support both this README and the future Streamlit dashboard.
